@@ -1,0 +1,81 @@
+name: Build Hermes Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-hermes-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 180
+
+    env:
+      UPSTREAM_COMMIT: eb461d844d69853cd12de4b0af7b271dcfbb085a
+      NODE_API_DONOR_REF: node-api-hermes-2025-09-01-RNv0.82.0-265ef62ff3eb7289d17e366664ac0da82303e101
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Build xcframework
+        run: |
+          mkdir -p dist
+          WORK_ROOT="$RUNNER_TEMP/build-hermes" \
+          IOS_NEXT_DIR="$RUNNER_TEMP/ios-next" \
+          OUTPUT_XCFRAMEWORK="$GITHUB_WORKSPACE/dist/hermes.xcframework" \
+          ./build_hermes_for_ios_next.sh
+
+      - name: Zip xcframework
+        run: |
+          rm -f dist/hermes-xcframework.zip
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/hermes.xcframework \
+            dist/hermes-xcframework.zip
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-xcframework
+          path: dist/hermes-xcframework.zip
+          if-no-files-found: error
+
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          TAG="build-${GITHUB_SHA::12}"
+          TITLE="Hermes build ${GITHUB_SHA::7}"
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+
+          cat > "$NOTES_FILE" <<EOF
+          NativeScript-ready Hermes xcframework build.
+
+          - Upstream commit: \`$UPSTREAM_COMMIT\`
+          - Node-API donor ref: \`$NODE_API_DONOR_REF\`
+          - Source commit: \`${GITHUB_SHA}\`
+          EOF
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/hermes-xcframework.zip --clobber
+            gh release edit "$TAG" \
+              --draft \
+              --title "$TITLE" \
+              --notes-file "$NOTES_FILE"
+          else
+            gh release create "$TAG" \
+              dist/hermes-xcframework.zip \
+              --draft \
+              --title "$TITLE" \
+              --target "$GITHUB_SHA" \
+              --notes-file "$NOTES_FILE"
+          fi

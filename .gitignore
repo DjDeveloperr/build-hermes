@@ -1,0 +1,8 @@
+.DS_Store
+.hermes-eb461d8-node-api/
+dist/
+destroot/
+hermes-src/
+hermes-test/
+hermes-test2/
+rn-node-api/
