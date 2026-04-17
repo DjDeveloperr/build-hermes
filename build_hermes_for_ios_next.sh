@@ -21,6 +21,8 @@ WORK_ROOT="${WORK_ROOT:-$PWD/.hermes-eb461d8-node-api}"
 SRC_DIR="${SRC_DIR:-$WORK_ROOT/src}"
 IOS_NEXT_DIR="${IOS_NEXT_DIR:-$HOME/Developer/Projects/NativeScript/ios-next}"
 OUTPUT_XCFRAMEWORK="${OUTPUT_XCFRAMEWORK:-$IOS_NEXT_DIR/Frameworks/hermes.xcframework}"
+OUTPUT_HEADERS_DIR="${OUTPUT_HEADERS_DIR:-$(dirname "$OUTPUT_XCFRAMEWORK")/hermes-headers}"
+OUTPUT_TOOLS_DIR="${OUTPUT_TOOLS_DIR:-$(dirname "$OUTPUT_XCFRAMEWORK")/hermes-tools-macos}"
 
 IOS_DEPLOYMENT_TARGET="${IOS_DEPLOYMENT_TARGET:-13.0}"
 MAC_DEPLOYMENT_TARGET="${MAC_DEPLOYMENT_TARGET:-11.0}"
@@ -811,6 +813,15 @@ source ./utils/build-apple-framework.sh
 build_apple_framework "macosx" "x86_64;arm64" "$MAC_DEPLOYMENT_TARGET"
 build_apple_framework "iphoneos" "arm64" "$IOS_DEPLOYMENT_TARGET"
 build_apple_framework "iphonesimulator" "x86_64;arm64" "$IOS_DEPLOYMENT_TARGET"
+
+note "Building additional host Hermes tools"
+HOST_TOOL_TARGETS=(hbcdump hdb hbc-attribute hbc-deltaprep hbc-diff)
+HOST_TOOL_JOBS="${NUM_CORES:-$(sysctl -n hw.ncpu 2>/dev/null || echo 8)}"
+cmake --build ./build_host_hermesc --target "${HOST_TOOL_TARGETS[@]}" -j "$HOST_TOOL_JOBS"
+mkdir -p ./destroot/bin
+for tool in "${HOST_TOOL_TARGETS[@]}"; do
+  cp "./build_host_hermesc/bin/$tool" "./destroot/bin/$tool"
+done
 popd >/dev/null
 
 rename_framework() {
@@ -834,9 +845,26 @@ rename_framework() {
   fi
 }
 
+install_headers_into_framework() {
+  local framework_path="$1"
+
+  if [[ -d "$framework_path/Versions/Current" ]]; then
+    local headers_dir="$framework_path/Versions/Current/Headers"
+    rm -rf "$headers_dir"
+    mkdir -p "$headers_dir"
+    rsync -a "$SRC_DIR/destroot/include/" "$headers_dir/"
+    [[ -e "$framework_path/Headers" ]] || ln -s "Versions/Current/Headers" "$framework_path/Headers"
+  else
+    local headers_dir="$framework_path/Headers"
+    rm -rf "$headers_dir"
+    mkdir -p "$headers_dir"
+    rsync -a "$SRC_DIR/destroot/include/" "$headers_dir/"
+  fi
+}
+
 note "Packaging NativeScript-friendly hermes.xcframework"
 PKG_DIR="$WORK_ROOT/pkg"
-rm -rf "$PKG_DIR" "$OUTPUT_XCFRAMEWORK"
+rm -rf "$PKG_DIR" "$OUTPUT_XCFRAMEWORK" "$OUTPUT_HEADERS_DIR" "$OUTPUT_TOOLS_DIR"
 mkdir -p "$PKG_DIR"
 
 cp -R "$SRC_DIR/destroot/Library/Frameworks/iphoneos" "$PKG_DIR/ios-arm64"
@@ -846,6 +874,9 @@ cp -R "$SRC_DIR/destroot/Library/Frameworks/macosx" "$PKG_DIR/macos-arm64_x86_64
 rename_framework "$PKG_DIR/ios-arm64"
 rename_framework "$PKG_DIR/ios-arm64_x86_64-simulator"
 rename_framework "$PKG_DIR/macos-arm64_x86_64"
+install_headers_into_framework "$PKG_DIR/ios-arm64/hermes.framework"
+install_headers_into_framework "$PKG_DIR/ios-arm64_x86_64-simulator/hermes.framework"
+install_headers_into_framework "$PKG_DIR/macos-arm64_x86_64/hermes.framework"
 
 xcodebuild -create-xcframework \
   -framework "$PKG_DIR/ios-arm64/hermes.framework" \
@@ -853,5 +884,11 @@ xcodebuild -create-xcframework \
   -framework "$PKG_DIR/macos-arm64_x86_64/hermes.framework" \
   -output "$OUTPUT_XCFRAMEWORK"
 
+mkdir -p "$OUTPUT_HEADERS_DIR" "$OUTPUT_TOOLS_DIR"
+rsync -a "$SRC_DIR/destroot/include/" "$OUTPUT_HEADERS_DIR/"
+rsync -a "$SRC_DIR/destroot/bin/" "$OUTPUT_TOOLS_DIR/"
+
 note "Done"
 echo "Wrote: $OUTPUT_XCFRAMEWORK"
+echo "Wrote: $OUTPUT_HEADERS_DIR"
+echo "Wrote: $OUTPUT_TOOLS_DIR"

@@ -32,20 +32,29 @@ jobs:
           WORK_ROOT="$RUNNER_TEMP/build-hermes" \
           IOS_NEXT_DIR="$RUNNER_TEMP/ios-next" \
           OUTPUT_XCFRAMEWORK="$GITHUB_WORKSPACE/dist/hermes.xcframework" \
+          OUTPUT_HEADERS_DIR="$GITHUB_WORKSPACE/dist/hermes-headers" \
+          OUTPUT_TOOLS_DIR="$GITHUB_WORKSPACE/dist/hermes-tools-macos" \
           ./build_hermes_for_ios_next.sh
 
-      - name: Zip xcframework
+      - name: Package release assets
         run: |
           rm -f dist/hermes-xcframework.zip
+          rm -f dist/hermes-headers.tar.gz
+          rm -f dist/hermes-tools-macos.tar.gz
           ditto -c -k --sequesterRsrc --keepParent \
             dist/hermes.xcframework \
             dist/hermes-xcframework.zip
+          tar -C dist -czf dist/hermes-headers.tar.gz hermes-headers
+          tar -C dist -czf dist/hermes-tools-macos.tar.gz hermes-tools-macos
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hermes-xcframework
-          path: dist/hermes-xcframework.zip
+          name: hermes-release-assets
+          path: |
+            dist/hermes-xcframework.zip
+            dist/hermes-headers.tar.gz
+            dist/hermes-tools-macos.tar.gz
           if-no-files-found: error
 
       - name: Publish draft release
@@ -66,7 +75,11 @@ jobs:
           EOF
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/hermes-xcframework.zip --clobber
+            gh release upload "$TAG" \
+              dist/hermes-xcframework.zip \
+              dist/hermes-headers.tar.gz \
+              dist/hermes-tools-macos.tar.gz \
+              --clobber
             gh release edit "$TAG" \
               --draft \
               --title "$TITLE" \
@@ -74,6 +87,8 @@ jobs:
           else
             gh release create "$TAG" \
               dist/hermes-xcframework.zip \
+              dist/hermes-headers.tar.gz \
+              dist/hermes-tools-macos.tar.gz \
               --draft \
               --title "$TITLE" \
               --target "$GITHUB_SHA" \
